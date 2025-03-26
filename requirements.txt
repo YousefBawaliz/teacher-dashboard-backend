@@ -1,0 +1,11 @@
+flask
+flask-smorest
+flask-sqlalchemy
+flask-migrate
+flask-login
+flask-cors
+marshmallow
+werkzeug
+sqlalchemy
+pytest
+python-dotenv
