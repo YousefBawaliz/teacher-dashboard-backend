@@ -40,6 +40,9 @@ class TestConfig(Config):
     SESSION_PROTECTION = 'strong'
     WTF_CSRF_ENABLED = False
     SESSION_COOKIE_SECURE = False
+    # In app/config.py, add to TestConfig:
+    import logging
+    logging.basicConfig(level=logging.DEBUG)
 
 
 class ProdConfig(Config):

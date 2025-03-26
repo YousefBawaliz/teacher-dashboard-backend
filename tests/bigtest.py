@@ -65,8 +65,15 @@ def test_app():
 @pytest.fixture(scope='module')
 def test_client(test_app):
     """Create a test client for making requests."""
-    return test_app.test_client()
+    with test_app.test_client() as client:
+        # Enable preserving the cookies
+        client.testing = True
+        # Configure to follow redirects (which might occur during login)
+        client.follow_redirects = True
+        yield client
 
+
+# In tests/bigtest.py
 
 @pytest.fixture(scope='module')
 def auth_headers(test_app, test_client):
@@ -75,42 +82,35 @@ def auth_headers(test_app, test_client):
     """
     headers = {'Content-Type': 'application/json'}
     
-    # Login as teacher
-    teacher_login = test_client.post('/api/login', json={
+    # Login as teacher - save the session cookie properly
+    teacher_response = test_client.post('/api/login', json={
         'email': 'teacher_test@example.com',
         'password': 'testpassword'
     })
-    assert teacher_login.status_code == 200, f"Teacher login failed: {teacher_login.get_json()}"
+    assert teacher_response.status_code == 200, f"Teacher login failed: {teacher_response.get_json()}"
     
-    # Verify teacher authentication and role
-    with test_app.app_context():
-        teacher = User.query.filter_by(email='teacher_test@example.com').first()
-        assert teacher is not None, "Teacher not found in database"
-        assert teacher.role == 'teacher', f"Teacher role is {teacher.role}"
-        assert teacher.is_teacher, "Teacher is_teacher property is False"
+    # Extract the session cookie correctly
+    teacher_cookies = teacher_response.headers.getlist('Set-Cookie')
+    teacher_cookie_header = '; '.join(teacher_cookies)
     
-    teacher_cookies = teacher_login.headers.get('Set-Cookie')
-    assert teacher_cookies is not None, "No cookies returned from teacher login"
-    
-    # Login as student
-    student_login = test_client.post('/api/login', json={
+    # Login as student - same approach
+    student_response = test_client.post('/api/login', json={
         'email': 'student_test@example.com',
         'password': 'testpassword'
     })
-    assert student_login.status_code == 200, f"Student login failed: {student_login.get_json()}"
-    student_cookies = student_login.headers.get('Set-Cookie')
+    assert student_response.status_code == 200, f"Student login failed: {student_response.get_json()}"
+    student_cookies = student_response.headers.getlist('Set-Cookie')
+    student_cookie_header = '; '.join(student_cookies)
     
-    # Add debug headers to track authentication
+    # Set up headers with cookies
     teacher_headers = {
         **headers,
-        'Cookie': teacher_cookies,
-        'X-Test-Role': 'teacher'  # Add role to headers for debugging
+        'Cookie': teacher_cookie_header
     }
     
     student_headers = {
         **headers,
-        'Cookie': student_cookies,
-        'X-Test-Role': 'student'  # Add role to headers for debugging
+        'Cookie': student_cookie_header
     }
     
     return {
@@ -369,3 +369,35 @@ def test_authorization_checks(test_app, test_client, auth_headers):
             headers=auth_headers['student']
         )
         assert unauthorized_courses_response.status_code == 200  # Will return student's courses
+
+
+def test_auth_status(test_client, auth_headers):
+    """Verify the authentication status is working correctly."""
+    # Test teacher authentication
+    teacher_response = test_client.get('/api/isLoggedIn', headers=auth_headers['teacher'])
+    teacher_data = json.loads(teacher_response.data)
+    print(f"Teacher auth status response: {teacher_data}")
+    
+    assert teacher_response.status_code == 200, "Teacher auth check failed"
+    assert teacher_data.get('isAuthenticated') is True, "Teacher not authenticated"
+    assert teacher_data.get('user', {}).get('role') == 'teacher', "Teacher role incorrect"
+    assert teacher_data.get('user', {}).get('is_teacher') is True, "Teacher is_teacher property incorrect"
+    
+    # Test student authentication
+    student_response = test_client.get('/api/isLoggedIn', headers=auth_headers['student'])
+    student_data = json.loads(student_response.data)
+    print(f"Student auth status response: {student_data}")
+    
+    assert student_response.status_code == 200, "Student auth check failed"
+    assert student_data.get('isAuthenticated') is True, "Student not authenticated"
+    assert student_data.get('user', {}).get('role') == 'student', "Student role incorrect"
+    assert not student_data.get('user', {}).get('is_teacher', True), "Student is_teacher property incorrect"
+    
+    # Test without authentication headers
+    no_auth_response = test_client.get('/api/isLoggedIn')
+    no_auth_data = json.loads(no_auth_response.data)
+    print(f"No auth status response: {no_auth_data}")
+    
+    assert no_auth_response.status_code == 200, "No auth check failed"
+    assert no_auth_data.get('isAuthenticated') is False, "Unauthenticated user shown as authenticated"
+    assert no_auth_data.get('user') is None, "Unauthenticated user has user data"
